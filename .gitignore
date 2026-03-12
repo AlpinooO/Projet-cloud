@@ -1,0 +1,78 @@
+# ===========================
+# Terraform
+# ===========================
+
+# Répertoire des providers et modules téléchargés
+.terraform/
+.terraform.lock.hcl
+
+# Fichiers d'état (contiennent des données sensibles / infrastructure réelle)
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.*
+
+# Fichiers de variables (peuvent contenir des secrets / chemins locaux)
+terraform.tfvars
+terraform.tfvars.json
+*.auto.tfvars
+*.auto.tfvars.json
+
+# Logs de crash Terraform
+crash.log
+crash.*.log
+
+# Fichiers d'override (utilisés localement)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Plan Terraform
+*.tfplan
+
+# ===========================
+# Ansible
+# ===========================
+
+# Fichiers d'inventaire dynamiques ou sensibles
+ansible/inventory.ini
+ansible/*.retry
+
+# Vault password file
+.vault_pass
+vault_password_file
+
+# Logs Ansible
+ansible/*.log
+
+# ===========================
+# Clés SSH & secrets
+# ===========================
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+*.p12
+*.pfx
+
+# ===========================
+# Système / IDE
+# ===========================
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# JetBrains
+.idea/
+
+# Variables d'environnement
+.env
+.env.*

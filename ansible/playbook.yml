@@ -1,0 +1,165 @@
+---
+- name: Configuration de la VM Azure
+  hosts: vm
+  become: yes
+
+  vars:
+    app_dir: /app
+    app_port: 8080
+    connection_string: "{{ lookup('env', 'AZURE_STORAGE_CONNECTION_STRING') }}"
+
+  tasks:
+    - name: Mettre à jour apt
+      apt:
+        update_cache: yes
+
+    - name: Installer curl et git
+      apt:
+        name:
+          - curl
+          - git
+        state: present
+
+    - name: Installer NVM
+      shell: |
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+      args:
+        executable: /bin/bash
+      become_user: adminuser
+
+    - name: Installer Node.js 18 via NVM
+      shell: |
+        export NVM_DIR="$HOME/.nvm"
+        source "$NVM_DIR/nvm.sh"
+        nvm install 18
+        nvm use 18
+      args:
+        executable: /bin/bash
+      become_user: adminuser
+
+    - name: Créer le dossier app
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: adminuser
+        mode: '0755'
+
+    - name: Copier index.js
+      copy:
+        dest: "{{ app_dir }}/index.js"
+        owner: adminuser
+        content: |
+          const http = require('http');
+          const { BlobServiceClient } = require('@azure/storage-blob');
+
+          const CONNECTION_STRING = "{{ connection_string }}";
+          const CONTAINER_NAME = "fichiers-statiques";
+
+          const blobServiceClient = BlobServiceClient.fromConnectionString(CONNECTION_STRING);
+          const containerClient = blobServiceClient.getContainerClient(CONTAINER_NAME);
+
+          async function uploadFile(filename, content) {
+            const blockBlobClient = containerClient.getBlockBlobClient(filename);
+            await blockBlobClient.upload(content, Buffer.byteLength(content));
+            return blockBlobClient.url;
+          }
+
+          async function downloadFile(filename) {
+            const blockBlobClient = containerClient.getBlockBlobClient(filename);
+            const downloadResponse = await blockBlobClient.download(0);
+            const chunks = [];
+            for await (const chunk of downloadResponse.readableStreamBody) {
+              chunks.push(chunk);
+            }
+            return Buffer.concat(chunks).toString();
+          }
+
+          async function listFiles() {
+            const files = [];
+            for await (const blob of containerClient.listBlobsFlat()) {
+              files.push({ name: blob.name, size: blob.properties.contentLength });
+            }
+            return files;
+          }
+
+          async function deleteFile(filename) {
+            const blockBlobClient = containerClient.getBlockBlobClient(filename);
+            await blockBlobClient.delete();
+          }
+
+          const server = http.createServer(async (req, res) => {
+            res.setHeader('Content-Type', 'application/json');
+            try {
+              if (req.method === 'GET' && req.url === '/files') {
+                const files = await listFiles();
+                res.writeHead(200);
+                res.end(JSON.stringify({ files }));
+              } else if (req.method === 'POST' && req.url === '/upload') {
+                let body = '';
+                req.on('data', chunk => body += chunk);
+                req.on('end', async () => {
+                  const { filename, content } = JSON.parse(body);
+                  const url = await uploadFile(filename, content);
+                  res.writeHead(201);
+                  res.end(JSON.stringify({ message: 'Fichier uploadé', url }));
+                });
+              } else if (req.method === 'GET' && req.url.startsWith('/files/')) {
+                const filename = req.url.split('/files/')[1];
+                const content = await downloadFile(filename);
+                res.writeHead(200);
+                res.end(JSON.stringify({ filename, content }));
+              } else if (req.method === 'DELETE' && req.url.startsWith('/files/')) {
+                const filename = req.url.split('/files/')[1];
+                await deleteFile(filename);
+                res.writeHead(200);
+                res.end(JSON.stringify({ message: 'Fichier supprimé' }));
+              } else {
+                res.writeHead(404);
+                res.end(JSON.stringify({ error: 'Route non trouvée' }));
+              }
+            } catch (err) {
+              res.writeHead(500);
+              res.end(JSON.stringify({ error: err.message }));
+            }
+          });
+
+          server.listen({{ app_port }}, () => console.log('Server running on port {{ app_port }}'));
+
+    - name: Installer les dépendances npm
+      shell: |
+        export NVM_DIR="$HOME/.nvm"
+        source "$NVM_DIR/nvm.sh"
+        cd {{ app_dir }}
+        npm init -y
+        npm install @azure/storage-blob
+      args:
+        executable: /bin/bash
+      become_user: adminuser
+
+    - name: Installer PM2
+      shell: |
+        export NVM_DIR="$HOME/.nvm"
+        source "$NVM_DIR/nvm.sh"
+        npm install -g pm2
+      args:
+        executable: /bin/bash
+      become_user: adminuser
+
+    - name: Lancer l'app avec PM2
+      shell: |
+        export NVM_DIR="$HOME/.nvm"
+        source "$NVM_DIR/nvm.sh"
+        pm2 delete app 2>/dev/null || true
+        pm2 start {{ app_dir }}/index.js --name app
+        pm2 save
+      args:
+        executable: /bin/bash
+      become_user: adminuser
+
+    - name: Configurer PM2 au démarrage
+      shell: |
+        env PATH=$PATH:/home/adminuser/.nvm/versions/node/v18.20.8/bin pm2 startup systemd -u adminuser --hp /home/adminuser
+      args:
+        executable: /bin/bash
+      become: yes
+      become_user: root
